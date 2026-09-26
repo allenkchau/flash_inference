@@ -1,0 +1,6 @@
+# ignore python build cache
+__pycache__/
+
+# ignore some uv generated files
+.venv/
+

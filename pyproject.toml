@@ -1,0 +1,20 @@
+[project]
+name = "flash-inference"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Allen Chau" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=9.1.1",
+    "torch>=2.14.0",
+]
+
+[project.scripts]
+flash-inference = "flash_inference:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
