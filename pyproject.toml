@@ -1,14 +1,15 @@
 [project]
 name = "flash-inference"
-version = "0.1.0"
+version = "1.0.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
     { name = "Allen Chau" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "pytest>=9.1.1",
     "torch>=2.14.0",
 ]
 
@@ -18,3 +19,59 @@ flash-inference = "flash_inference:main"
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.setuptools.packages.find]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff.lint]
+select = [
+    # pydocstyle
+    "D",
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-implicit-str-concat
+    "ISC",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # flake8-logging-format
+    "G",
+    # flake8-no-pep420
+    "INP",
+]
+ignore = [
+    # don't enforce that everything has a docstring
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    # unwanted pydocstyle rules
+    "D205", "D209", "D301", "D400", "D401", "D404", "D415",
+    # incompatible pydocstyle pairs; pin the half `ruff` already picks
+    "D203", "D213",
+    # star imports
+    "F405", "F403",
+    # lambda expression assignment
+    "E731",
+    # zip without `strict=`
+    "B905",
+    # Loop control variable not used within loop body
+    "B007",
+    # f-string format
+    "UP032",
+]
+
+[tool.ruff.lint.pydocstyle]
+ignore-var-parameters = true
+
+[tool.ruff.format]
+docstring-code-format = true

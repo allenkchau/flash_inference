@@ -4,3 +4,6 @@ __pycache__/
 # ignore some uv generated files
 .venv/
 
+# testing and linting caches
+.ruff_cache/
+.pytest_cache/
