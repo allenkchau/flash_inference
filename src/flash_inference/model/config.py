@@ -1,15 +1,25 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
-class ModelArgs:
+class ModelConfig:
+    # primary tensor dimensions
     hidden_dim: int
     vocab_size: int
-    hidden_dim: int
+    intermediate_dim: int
     n_layers: int
     n_heads: int
-    max_seq_len: int
+
+    # attention and architecture variants
+    n_kv_heads: Optional[int]
     mlp_bias: bool
+
+    # numerical and positional hyperparameters
+    max_seq_len: int
+
+    def __post_init__(self):
+        if self.n_kv_heads
 
     @property
     def head_dim(self) -> int:
