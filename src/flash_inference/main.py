@@ -22,7 +22,7 @@ def test_forward():
     print(inputs)
 
     # pass the inputs to the models
-    
+
 
 if __name__ == "__main__":
     test_forward()

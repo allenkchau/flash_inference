@@ -3,16 +3,12 @@ import torch.nn as nn
 
 from flash_inference.model.config import ModelConfig
 
-class GQAttention(nn.Module):
+class RMSNorm(nn.Module):
     def __init__(self, config: ModelConfig):
-        super().__init__()
-
-        # learned key, query, value matrices
-        self.Wk = 
-        self.Wv = 
-        self.Wq = 
-
-        # 
+        self.eps = config.rms_norm_eps
+        self.gamma = nn.Parameter()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-
+        rms = torch.sqr( + self.eps)
+        torch.()
+        return 
