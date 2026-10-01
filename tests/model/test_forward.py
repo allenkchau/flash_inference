@@ -14,7 +14,7 @@ from flash_inference.model.config import ModelConfig
 #     model = AutoModelForCausalLM.from_pretrained(model_id)
 #     model = model.to(device)
 
-#     # load our scratch model
+#     # load our scratch model instance and initialize with HF weights
 #     # config = ModelConfig()
 
 #     # tokenize the text
