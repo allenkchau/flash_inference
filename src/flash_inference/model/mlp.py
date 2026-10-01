@@ -12,9 +12,15 @@ class MLP(nn.Module):
         super().__init__()
 
         # projection matrices
-        self.up_proj = nn.Linear(config.hidden_dim, config.intermediate_dim, bias=config.mlp_bias)
-        self.gate_proj = nn.Linear(config.hidden_dim, config.intermediate_dim, bias=config.mlp_bias)
-        self.down_proj = nn.Linear(config.intermediate_dim, config.hidden_dim, bias=config.mlp_bias)
+        self.up_proj = nn.Linear(
+            config.hidden_dim, config.intermediate_dim, bias=config.mlp_bias
+        )
+        self.gate_proj = nn.Linear(
+            config.hidden_dim, config.intermediate_dim, bias=config.mlp_bias
+        )
+        self.down_proj = nn.Linear(
+            config.intermediate_dim, config.hidden_dim, bias=config.mlp_bias
+        )
 
         # SiLU activation
         self.activation = nn.SiLU()

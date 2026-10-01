@@ -21,9 +21,9 @@ from flash_inference.model.config import ModelConfig
 #     inputs = tokenizer(prompt)
 #     print(inputs)
 
-    # run HF model
+# run HF model
 
-    # run our model
+# run our model
 
-    # compare the output logits
-    # assert torch.allclose()
+# compare the output logits
+# assert torch.allclose()

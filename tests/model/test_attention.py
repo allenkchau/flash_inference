@@ -1,0 +1,165 @@
+import pytest
+import torch
+from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaAttention
+
+from flash_inference.model.attention import Attention
+from flash_inference.model.config import ModelConfig
+
+
+@pytest.fixture
+def smollm_config():
+    """ModelConfig fixture matching SmolLM-135M dimensions:
+
+    hidden_dim = 576, n_heads = 9, n_kv_heads = 3, head_dim = 64
+    """
+    return ModelConfig(
+        hidden_dim=576,
+        n_layers=30,
+        n_heads=9,
+        n_kv_heads=3,
+        vocab_size=49152,
+        intermediate_dim=1536,
+        max_seq_len=2048,
+        rms_norm_eps=1e-5,
+        rope_theta=10000.0,
+        attn_bias=False,
+    )
+
+
+def test_attention_projections_and_shapes(smollm_config):
+    """Verify that GQA linear projections have correct weight matrix dimensions.
+
+    - q_proj: (hidden_dim, n_heads * head_dim) = (576, 9 * 64 = 576)
+    - k_proj: (hidden_dim, n_kv_heads * head_dim) = (576, 3 * 64 = 192)
+    - v_proj: (hidden_dim, n_kv_heads * head_dim) = (576, 3 * 64 = 192)
+    - o_proj: (n_heads * head_dim, hidden_dim) = (576, 576)
+    """
+    attn = Attention(smollm_config)
+    attn.eval()
+
+    h_dim = smollm_config.hidden_dim
+    q_dim = smollm_config.n_heads * smollm_config.head_dim
+    kv_dim = smollm_config.n_kv_heads * smollm_config.head_dim
+
+    assert attn.q_proj.weight.shape == (q_dim, h_dim)
+    assert attn.k_proj.weight.shape == (kv_dim, h_dim)
+    assert attn.v_proj.weight.shape == (kv_dim, h_dim)
+    assert attn.o_proj.weight.shape == (h_dim, q_dim)
+
+    if hasattr(attn.q_proj, "bias") and attn.q_proj.bias is not None:
+        pytest.fail("Attention projections should not have bias terms for SmolLM.")
+
+
+def test_attention_forward_output_shape(smollm_config):
+    """Verify output tensor maintains (batch_size, seq_len, hidden_dim)."""
+    attn = Attention(smollm_config)
+    attn.eval()
+
+    batch_size = 2
+    seq_len = 16
+    x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim)
+
+    with torch.no_grad():
+        out = attn(x)
+
+    assert out.shape == (
+        batch_size,
+        seq_len,
+        smollm_config.hidden_dim,
+    ), (
+        f"Expected shape {(batch_size, seq_len, smollm_config.hidden_dim)}, got {out.shape}"
+    )
+
+
+def test_attention_causal_masking(smollm_config):
+    """Causality test:
+
+    Changes to future tokens in the input must NOT alter the outputs
+    of preceding tokens.
+    """
+    attn = Attention(smollm_config)
+    attn.eval()
+
+    batch_size = 1
+    seq_len = 8
+    x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim)
+
+    with torch.no_grad():
+        out1 = attn(x)
+
+        # Perturb the last token position
+        x_perturbed = x.clone()
+        x_perturbed[:, -1, :] += torch.randn_like(x_perturbed[:, -1, :]) * 10.0
+
+        out2 = attn(x_perturbed)
+
+    # Check that tokens at indices [0, seq_len - 2] are completely unchanged
+    torch.testing.assert_close(
+        out1[:, :-1, :],
+        out2[:, :-1, :],
+        atol=1e-6,
+        rtol=1e-6,
+        msg="Attention violated causal property! Future tokens affected past outputs.",
+    )
+
+    # The last token output SHOULD be different
+    assert not torch.allclose(out1[:, -1, :], out2[:, -1, :]), (
+        "Perturbed token output remained identical!"
+    )
+
+
+def test_attention_hf_numerical_parity(smollm_config):
+    """Golden Reference Test:
+
+    Verify numerical parity against Hugging Face's LlamaAttention.
+    """
+    torch.manual_seed(42)
+
+    # 1. Custom Attention
+    custom_attn = Attention(smollm_config)
+    custom_attn.eval()
+
+    # 2. Hugging Face LlamaAttention setup
+    hf_config = LlamaConfig(
+        hidden_size=smollm_config.hidden_dim,
+        num_attention_heads=smollm_config.n_heads,
+        num_key_value_heads=smollm_config.n_kv_heads,
+        max_position_embeddings=smollm_config.max_seq_len,
+        rms_norm_eps=smollm_config.rms_norm_eps,
+        rope_theta=smollm_config.rope_theta,
+        attention_bias=False,
+    )
+    # HF LlamaAttention requires layer_idx
+    hf_attn = LlamaAttention(config=hf_config, layer_idx=0)
+    hf_attn.eval()
+
+    # 3. Synchronize projection weights
+    with torch.no_grad():
+        hf_attn.q_proj.weight.copy_(custom_attn.q_proj.weight)
+        hf_attn.k_proj.weight.copy_(custom_attn.k_proj.weight)
+        hf_attn.v_proj.weight.copy_(custom_attn.v_proj.weight)
+        hf_attn.o_proj.weight.copy_(custom_attn.o_proj.weight)
+
+    # 4. Input setup
+    batch_size = 2
+    seq_len = 12
+    x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim, dtype=torch.float32)
+
+    # 5. Forward passes
+    with torch.no_grad():
+        # If your custom attention takes RoPE / positions, pass them accordingly.
+        # For Phase 1 naive forward pass:
+        custom_out = custom_attn(x)
+
+        # HF LlamaAttention forward pass signature
+        hf_out = hf_attn(x)[0]
+
+    # 6. Verify outputs match
+    torch.testing.assert_close(
+        custom_out,
+        hf_out,
+        atol=1e-5,
+        rtol=1e-5,
+        msg="Custom Attention output deviates from Hugging Face reference!",
+    )

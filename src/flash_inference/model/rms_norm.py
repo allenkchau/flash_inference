@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from flash_inference.model.config import ModelConfig
 
+
 class RMSNorm(nn.Module):
     def __init__(self, hidden_dim: int, rms_norm_eps: float):
         super().__init__()
@@ -13,5 +14,7 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        rms_x = torch.sqrt(((x**2).sum(dim=-1, keepdim=True) / self.hidden_dim + self.rms_norm_eps))
+        rms_x = torch.sqrt(
+            ((x**2).sum(dim=-1, keepdim=True) / self.hidden_dim + self.rms_norm_eps)
+        )
         return (x / rms_x) * self.weight
