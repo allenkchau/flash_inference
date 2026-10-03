@@ -15,19 +15,24 @@ def main():
     hf_model = AutoModelForCausalLM.from_pretrained(model_id)
     hf_model = hf_model.to(device)
 
-    # load our scratch model and initialize it with weights from HF
-    config = ModelConfig()
-    model = Transformer(config)
-
-
+    # create config and load our scratch model with weights from HF
+    # config = ModelConfig.from_huggingface(model_id)
+    # model = Transformer(config).to(device)
 
     # tokenize the text
-    inputs = tokenizer(prompt)
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
     print(inputs)
 
     # pass the inputs to the models
-    hf_model(inputs)
-    model(inputs)
+    # HF does greedy decoding by default
+    hf_outputs = hf_model.generate(
+        inputs["input_ids"],
+        max_length=50,
+    )
+
+    # outputs = model(inputs)
+
+    print(hf_outputs)
 
 
 if __name__ == "__main__":

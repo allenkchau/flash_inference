@@ -11,6 +11,26 @@ query -> What am I looking for? This vector represents the current word that is 
 key -> What do I offer? This vector acts like an indexing label or a tag for every word in the sequence, describing what kind of information that word contains.
 value -> What content do I actually hold? Once the system matches the query with the keys, this vector contains the actual content or meaning that gets extracted and passed along.
 
+In attention when we say we have multiple heads, that just means we have multiple sets of Q/K/V randomly initialized weight matrices. So we get n_head outputs of the attention operation.
+Each head is used to project the input embeddings into a different representation subspace.
+
+So the way to get back to a single matrix is to concatenate the outputs from the heads and then multiply by a final weight matrix Wo and that output is sent to the FFN.
+
+We do have an attention mask. This is normally mainly used during training but for the inference engine, the mask is activated during prefill. 
+When the engine processes the input prompt, a token at a certain position should only be able to attend to itself and the tokens before it. 
+If we didn't have the mask for prefill, we create a train-test mismatch (data the model sees during training comes from a much different distribution/environment than the data
+it sees during testing/deployment) which means the activations will be garbage, etc.
+
+When we do Q @ K.T we get a prompt_len by prompt_len grid of attention/compatibility scores where every row represents a query (token asking a question) and every column represents a key (token providing context).
+The tokens in row 1 should only see columns 0 and 1. Columns 2, 3... are the tokens in the future.
+
+So back to the mask. After Q @ K.T we add an upper triangular matrix of -infs. So now the upper triangular positions of the compatibility scores is -infs and then when we run sfotmax, the model zeros out
+the attention of that query with regards to future tokens. So for the case of row 1, the attention weight score in columns 2, 3... are all 0 and the model splits 100% of its attention between the first
+and second tokens.
+
+We don't have to worry about the mask during decode because if we have a KV cache, we just feed the newly generated token into the model and get a vector of attention scores (for every token in the prompt
+and the ones generated so far). There are no future tokens to worry about or mask out because they don't exist yet.
+
 GQ attention is a bit different. 
 
 Motivation: During inference, the KV cache becomes very large. When generating a token at a time, the model stores the Keys and Values of previous tokens in memory.

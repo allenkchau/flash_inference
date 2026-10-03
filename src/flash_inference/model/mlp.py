@@ -26,4 +26,5 @@ class MLP(nn.Module):
         self.activation = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.activation(self.gate_proj(x)) * self.up_proj(x))
+        out = self.down_proj(self.activation(self.gate_proj(x)) * self.up_proj(x))
+        return out

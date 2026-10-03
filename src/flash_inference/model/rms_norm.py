@@ -17,4 +17,5 @@ class RMSNorm(nn.Module):
         rms_x = torch.sqrt(
             ((x**2).sum(dim=-1, keepdim=True) / self.hidden_dim + self.rms_norm_eps)
         )
-        return (x / rms_x) * self.weight
+        out = (x / rms_x) * self.weight
+        return out

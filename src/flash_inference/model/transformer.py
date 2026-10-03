@@ -14,8 +14,9 @@ class Transformer(nn.Module):
 
         self.output_proj = nn.Linear(config.hidden_dim, config.vocab_size)
 
+    @torch.inference_mode
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         x = self.token_embeddings(input_ids)
         for layer in self.blocks:
             x = self.layer
-            return x
+            return out

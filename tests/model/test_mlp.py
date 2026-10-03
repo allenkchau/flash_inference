@@ -25,6 +25,7 @@ def smollm_args():
 def test_mlp_output_shape(smollm_args):
     """Verify input-to-output shape consistency for arbitrary batch sizes and sequence lengths."""
     mlp = MLP(smollm_args)
+    # change to inference mode - this affects behavior of some layers like dropout and batchnorm
     mlp.eval()
 
     batch_size = 2
