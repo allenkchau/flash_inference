@@ -3,7 +3,7 @@ import torch
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.llama.modeling_llama import LlamaAttention
 
-from flash_inference.model.attention import Attention
+from flash_inference.model.attention import GQAttention
 from flash_inference.model.config import ModelConfig
 
 
@@ -35,7 +35,7 @@ def test_attention_projections_and_shapes(smollm_config):
     - v_proj: (hidden_dim, n_kv_heads * head_dim) = (576, 3 * 64 = 192)
     - o_proj: (n_heads * head_dim, hidden_dim) = (576, 576)
     """
-    attn = Attention(smollm_config)
+    attn = GQAttention(smollm_config)
     attn.eval()
 
     h_dim = smollm_config.hidden_dim
@@ -53,7 +53,7 @@ def test_attention_projections_and_shapes(smollm_config):
 
 def test_attention_forward_output_shape(smollm_config):
     """Verify output tensor maintains (batch_size, seq_len, hidden_dim)."""
-    attn = Attention(smollm_config)
+    attn = GQAttention(smollm_config)
     attn.eval()
 
     batch_size = 2
@@ -78,7 +78,7 @@ def test_attention_causal_masking(smollm_config):
     Changes to future tokens in the input must NOT alter the outputs
     of preceding tokens.
     """
-    attn = Attention(smollm_config)
+    attn = GQAttention(smollm_config)
     attn.eval()
 
     batch_size = 1
@@ -117,7 +117,7 @@ def test_attention_hf_numerical_parity(smollm_config):
     torch.manual_seed(42)
 
     # 1. Custom Attention
-    custom_attn = Attention(smollm_config)
+    custom_attn = GQAttention(smollm_config)
     custom_attn.eval()
 
     # 2. Hugging Face LlamaAttention setup
@@ -146,14 +146,19 @@ def test_attention_hf_numerical_parity(smollm_config):
     seq_len = 12
     x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim, dtype=torch.float32)
 
+    # Generate neutral rotary position embeddings (cos=1, sin=0)
+    head_dim = smollm_config.head_dim
+    cos = torch.ones(batch_size, seq_len, head_dim, dtype=torch.float32)
+    sin = torch.zeros(batch_size, seq_len, head_dim, dtype=torch.float32)
+
     # 5. Forward passes
     with torch.no_grad():
         # If your custom attention takes RoPE / positions, pass them accordingly.
         # For Phase 1 naive forward pass:
         custom_out = custom_attn(x)
 
-        # HF LlamaAttention forward pass signature
-        hf_out = hf_attn(x)[0]
+        # Pass position_embeddings to HF LlamaAttention
+        hf_out = hf_attn(x, position_embeddings=(cos, sin))[0]
 
     # 6. Verify outputs match
     torch.testing.assert_close(

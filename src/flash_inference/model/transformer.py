@@ -16,7 +16,10 @@ class Transformer(nn.Module):
 
     @torch.inference_mode
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        x = self.token_embeddings(input_ids)
+        batch_size, seq_len = input_ids.shape
+
+        x = self.token_embeddings(input_ids)    # shape: ()
         for layer in self.blocks:
             x = self.layer
-            return out
+        out = self.output_proj()
+        return out
