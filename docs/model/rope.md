@@ -60,6 +60,8 @@ After rotating Q by m*theta and K by n*theta for example, the new angle is (m - 
 
 The dot product now depends only on the relative distance between the 2 words. Word A is at index 10 and word B at index 12 is the same rotation if A was at index 500 and B at 502 (-2 for both).
 
-In SmolLM, each head vector has head_dim=64. How do we rotate a 64 dimensional vector?
-
 Important: Within the Query and Key activations we get from projecting our input, each attention head's representation for a given token gets rotated in its own 64 dimensional feature space before the dot products are computed.
+
+In SmolLM, each head vector has head_dim=64. How do we rotate a 64 dimensional vector since rotation is fundamentally a 2D operation? In math, every rotation in any number of dimensions is broken down into rotations within 2D planes. 
+
+So we treat the 64 numbers as 32 independent 2D pairs. Each pair rotates at a different speed/frequency just like clock hands. The rotation frequencies are computed using a formula.
