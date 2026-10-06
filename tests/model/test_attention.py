@@ -129,8 +129,8 @@ def test_attention_hf_numerical_parity(smollm_config):
         rms_norm_eps=smollm_config.rms_norm_eps,
         rope_theta=smollm_config.rope_theta,
         attention_bias=False,
+        _attn_implementation="eager",
     )
-    # HF LlamaAttention requires layer_idx
     hf_attn = LlamaAttention(config=hf_config, layer_idx=0)
     hf_attn.eval()
 
@@ -146,21 +146,29 @@ def test_attention_hf_numerical_parity(smollm_config):
     seq_len = 12
     x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim, dtype=torch.float32)
 
-    # Generate neutral rotary position embeddings (cos=1, sin=0)
+    # Neutral rotary position embeddings (cos=1, sin=0)
     head_dim = smollm_config.head_dim
     cos = torch.ones(batch_size, seq_len, head_dim, dtype=torch.float32)
     sin = torch.zeros(batch_size, seq_len, head_dim, dtype=torch.float32)
 
-    # 5. Forward passes
+    # 5. Build HF Causal 4D Attention Mask
+    # HF eager expects shape: (batch_size, 1, seq_len, seq_len)
+    # with 0.0 for keep and a large negative number for masked tokens.
+    min_val = torch.finfo(torch.float32).min
+    causal_mask = torch.full((seq_len, seq_len), fill_value=min_val)
+    causal_mask = torch.triu(causal_mask, diagonal=1)
+    causal_mask = causal_mask.view(1, 1, seq_len, seq_len).expand(
+        batch_size, 1, seq_len, seq_len
+    )
+
+    # 6. Forward passes
     with torch.no_grad():
-        # If your custom attention takes RoPE / positions, pass them accordingly.
-        # For Phase 1 naive forward pass:
         custom_out = custom_attn(x)
+        hf_out = hf_attn(x, position_embeddings=(cos, sin), attention_mask=causal_mask)[
+            0
+        ]
 
-        # Pass position_embeddings to HF LlamaAttention
-        hf_out = hf_attn(x, position_embeddings=(cos, sin))[0]
-
-    # 6. Verify outputs match
+    # 7. Assert numerical equivalence
     torch.testing.assert_close(
         custom_out,
         hf_out,

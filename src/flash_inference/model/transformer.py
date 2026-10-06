@@ -18,7 +18,7 @@ class Transformer(nn.Module):
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len = input_ids.shape
 
-        x = self.token_embeddings(input_ids)    # shape: ()
+        x = self.token_embeddings(input_ids)  # shape: ()
         for layer in self.blocks:
             x = self.layer
         out = self.output_proj()

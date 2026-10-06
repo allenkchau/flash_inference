@@ -33,8 +33,9 @@ class ModelConfig:
             self.n_kv_heads = self.n_heads
         else:
             if self.n_heads % self.n_kv_heads != 0:
-                raise ValueError(f"n_heads ({self.n_heads}) must be divisible by n_kv_heads ({self.n_kv_heads})")
-        
+                raise ValueError(
+                    f"n_heads ({self.n_heads}) must be divisible by n_kv_heads ({self.n_kv_heads})"
+                )
 
     @property
     def head_dim(self) -> int:
