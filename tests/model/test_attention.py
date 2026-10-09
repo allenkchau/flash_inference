@@ -1,7 +1,10 @@
 import pytest
 import torch
 from transformers.models.llama.configuration_llama import LlamaConfig
-from transformers.models.llama.modeling_llama import LlamaAttention
+from transformers.models.llama.modeling_llama import (
+    LlamaAttention,
+    LlamaRotaryEmbedding,
+)
 
 from flash_inference.model.attention import GQAttention
 from flash_inference.model.config import ModelConfig
@@ -25,6 +28,30 @@ def smollm_config():
         rope_theta=10000.0,
         attn_bias=False,
     )
+
+
+@pytest.fixture
+def hf_llama_config(smollm_config):
+    """Matching Hugging Face LlamaConfig for reference validation."""
+    return LlamaConfig(
+        hidden_size=smollm_config.hidden_dim,
+        num_attention_heads=smollm_config.n_heads,
+        num_key_value_heads=smollm_config.n_kv_heads,
+        max_position_embeddings=smollm_config.max_seq_len,
+        rms_norm_eps=smollm_config.rms_norm_eps,
+        rope_theta=smollm_config.rope_theta,
+        attention_bias=False,
+        _attn_implementation="eager",
+    )
+
+
+def build_rotary_embeddings(hf_config, x: torch.Tensor):
+    """Helper to compute real (cos, sin) tensors matching the input shape."""
+    rotary_emb = LlamaRotaryEmbedding(config=hf_config)
+    seq_len = x.shape[1]
+    position_ids = torch.arange(seq_len, dtype=torch.long, device=x.device).unsqueeze(0)
+    cos, sin = rotary_emb(x, position_ids)
+    return cos, sin
 
 
 def test_attention_projections_and_shapes(smollm_config):
@@ -51,8 +78,8 @@ def test_attention_projections_and_shapes(smollm_config):
         pytest.fail("Attention projections should not have bias terms for SmolLM.")
 
 
-def test_attention_forward_output_shape(smollm_config):
-    """Verify output tensor maintains (batch_size, seq_len, hidden_dim)."""
+def test_attention_forward_output_shape(smollm_config, hf_llama_config):
+    """Verify output tensor maintains (batch_size, seq_len, hidden_dim) with RoPE applied."""
     attn = GQAttention(smollm_config)
     attn.eval()
 
@@ -60,8 +87,10 @@ def test_attention_forward_output_shape(smollm_config):
     seq_len = 16
     x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim)
 
+    cos, sin = build_rotary_embeddings(hf_llama_config, x)
+
     with torch.no_grad():
-        out = attn(x)
+        out = attn(x, cos=cos, sin=sin)
 
     assert out.shape == (
         batch_size,
@@ -72,8 +101,8 @@ def test_attention_forward_output_shape(smollm_config):
     )
 
 
-def test_attention_causal_masking(smollm_config):
-    """Causality test:
+def test_attention_causal_masking(smollm_config, hf_llama_config):
+    """Causality test with RoPE active:
 
     Changes to future tokens in the input must NOT alter the outputs
     of preceding tokens.
@@ -85,14 +114,16 @@ def test_attention_causal_masking(smollm_config):
     seq_len = 8
     x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim)
 
+    cos, sin = build_rotary_embeddings(hf_llama_config, x)
+
     with torch.no_grad():
-        out1 = attn(x)
+        out1 = attn(x, cos=cos, sin=sin)
 
         # Perturb the last token position
         x_perturbed = x.clone()
         x_perturbed[:, -1, :] += torch.randn_like(x_perturbed[:, -1, :]) * 10.0
 
-        out2 = attn(x_perturbed)
+        out2 = attn(x_perturbed, cos=cos, sin=sin)
 
     # Check that tokens at indices [0, seq_len - 2] are completely unchanged
     torch.testing.assert_close(
@@ -109,10 +140,11 @@ def test_attention_causal_masking(smollm_config):
     )
 
 
-def test_attention_hf_numerical_parity(smollm_config):
+def test_attention_hf_numerical_parity(smollm_config, hf_llama_config):
     """Golden Reference Test:
 
-    Verify numerical parity against Hugging Face's LlamaAttention.
+    Verify end-to-end numerical parity against Hugging Face's LlamaAttention
+    with real RoPE positions, causal masking, and GQA grouping.
     """
     torch.manual_seed(42)
 
@@ -121,17 +153,7 @@ def test_attention_hf_numerical_parity(smollm_config):
     custom_attn.eval()
 
     # 2. Hugging Face LlamaAttention setup
-    hf_config = LlamaConfig(
-        hidden_size=smollm_config.hidden_dim,
-        num_attention_heads=smollm_config.n_heads,
-        num_key_value_heads=smollm_config.n_kv_heads,
-        max_position_embeddings=smollm_config.max_seq_len,
-        rms_norm_eps=smollm_config.rms_norm_eps,
-        rope_theta=smollm_config.rope_theta,
-        attention_bias=False,
-        _attn_implementation="eager",
-    )
-    hf_attn = LlamaAttention(config=hf_config, layer_idx=0)
+    hf_attn = LlamaAttention(config=hf_llama_config, layer_idx=0)
     hf_attn.eval()
 
     # 3. Synchronize projection weights
@@ -146,14 +168,11 @@ def test_attention_hf_numerical_parity(smollm_config):
     seq_len = 12
     x = torch.randn(batch_size, seq_len, smollm_config.hidden_dim, dtype=torch.float32)
 
-    # Neutral rotary position embeddings (cos=1, sin=0)
-    head_dim = smollm_config.head_dim
-    cos = torch.ones(batch_size, seq_len, head_dim, dtype=torch.float32)
-    sin = torch.zeros(batch_size, seq_len, head_dim, dtype=torch.float32)
+    # 5. Real rotary position embeddings (cos, sin)
+    cos, sin = build_rotary_embeddings(hf_llama_config, x)
 
-    # 5. Build HF Causal 4D Attention Mask
-    # HF eager expects shape: (batch_size, 1, seq_len, seq_len)
-    # with 0.0 for keep and a large negative number for masked tokens.
+    # 6. Build standard HF 4D Causal Attention Mask
+    # Shape: (batch_size, 1, seq_len, seq_len)
     min_val = torch.finfo(torch.float32).min
     causal_mask = torch.full((seq_len, seq_len), fill_value=min_val)
     causal_mask = torch.triu(causal_mask, diagonal=1)
@@ -161,18 +180,20 @@ def test_attention_hf_numerical_parity(smollm_config):
         batch_size, 1, seq_len, seq_len
     )
 
-    # 6. Forward passes
+    # 7. Forward passes
     with torch.no_grad():
-        custom_out = custom_attn(x)
-        hf_out = hf_attn(x, position_embeddings=(cos, sin), attention_mask=causal_mask)[
-            0
-        ]
+        custom_out = custom_attn(x, cos=cos, sin=sin)
+        hf_out = hf_attn(
+            x,
+            position_embeddings=(cos, sin),
+            attention_mask=causal_mask,
+        )[0]
 
-    # 7. Assert numerical equivalence
+    # 8. Assert exact numerical equivalence
     torch.testing.assert_close(
         custom_out,
         hf_out,
         atol=1e-5,
         rtol=1e-5,
-        msg="Custom Attention output deviates from Hugging Face reference!",
+        msg="Custom Attention with RoPE output deviates from Hugging Face reference!",
     )

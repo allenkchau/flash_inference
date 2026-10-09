@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from flash_inference.model.config import ModelConfig
-# from flash_inference.model.rope import Rope
+from flash_inference.model.rope import apply_rotary_emb
 
 
 class GQAttention(nn.Module):
@@ -36,7 +36,7 @@ class GQAttention(nn.Module):
         mask = torch.tril(
             torch.ones(1, 1, 1, config.max_seq_len, config.max_seq_len)
         )  # shape: (batch_size, n_kv_heads, group_size, seq_len, seq_len)
-        # register buffer is a tensor attached to a module that does not reveive gradient updates; it os just saved and loaded inside the model's state_dict()
+        # register buffer is a tensor attached to a module that does not reveive gradient updates; it is just saved and loaded inside the model's state_dict()
         self.register_buffer("causal_mask", mask)
 
         # final output matrix that captures info from all the attn heads
@@ -44,7 +44,9 @@ class GQAttention(nn.Module):
             config.n_heads * config.head_dim, config.hidden_dim, bias=config.attn_bias
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+    ) -> torch.Tensor:
         # get query, key, value projections of our input
         # input shape: (batch_size, seq_len, hidden_dim)
         batch_size, seq_len, _ = x.shape
@@ -57,6 +59,12 @@ class GQAttention(nn.Module):
         # we want to separate the n_heads * head_dim numbers into n_head distinct heads of head_dim numbers each
         # then we need to split the query heads into groups and also add a group dimension of 1 to K and V
         # Q has n_heads = n_kv_heads * group_size
+
+        # before we split into groups we want to rotate Q and K so we can save K into our KV cache
+        # if we rotate AFTER splitting into groups, either we are caching the K tensor which has been repeated group_size times or we have to resize it back to 4D anyway
+        Q = apply_rotary_emb(Q, cos, sin)
+        K = apply_rotary_emb(K, cos, sin)
+
         # IMPORTANT: we do this reshape first before tranpose because the heads are sitting next to each other in memory so we can safely slice them into groups now
         # if we did it the other way, we would be splitting across tokens not heads; reshape just grabs the next chunks of numbers in physical memory
         # by reshaping into (n_kv_heads, group_size) before moving seq_len, we guarantee that we group heads that actually sit next to each other in memory

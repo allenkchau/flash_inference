@@ -35,9 +35,7 @@ In the original transformer we had absolute positional embeddings.
 
 What happened is we just add a learned position vector to the token embedding at the very beginning of the network before the input enters the first layer:
 
-$$
-x_{\text{input}} = x_{\text{word}} + p_{\text{pos}}
-$$
+$$x_{\text{input}} = x_{\text{word}} + p_{\text{pos}}$$
 
 The position vector is just a 1D vector of numbers with the exact same dimension as the token embedding (`hidden_dim`).
 
@@ -63,18 +61,7 @@ Instead of learning a table, the original paper filled the position vectors usin
 
 The position vector is:
 
-$$
-\text{Pos vector} =
-[
-\sin(pos \cdot w_0),
-\cos(pos \cdot w_0),
-\sin(pos \cdot w_1),
-\cos(pos \cdot w_1),
-\dots,
-\sin(pos \cdot w_k),
-\cos(pos \cdot w_k)
-]
-$$
+$$\text{Pos vector} = [ \sin(pos \cdot w_0), \cos(pos \cdot w_0), \sin(pos \cdot w_1), \cos(pos \cdot w_1), \dots, \sin(pos \cdot w_k), \cos(pos \cdot w_k) ]$$
 
 `k` is half of the hidden dim since we are using sin and cos pairs (2 values for a single frequency index).
 
@@ -111,9 +98,7 @@ Before the rotation, the angle was `φ`.
 
 After rotating Q by `m × θ` and K by `n × θ`, for example, the new angle is:
 
-$$
-(m - n)\theta + \phi
-$$
+$$(m - n)\theta + \phi$$
 
 The dot product now depends only on the relative distance between the 2 words.
 
@@ -123,7 +108,7 @@ Word A is at index 10 and word B at index 12 is the same rotation if A was at in
 
 ## How RoPE Rotates the Head Dimensions
 
-Important: Within the Query and Key activations we get from projecting our input, each attention head's representation for a given token gets rotated in its own 64-dimensional feature space before the dot products are computed.
+**Important:** Within the Query and Key activations we get from projecting our input, each attention head's representation for a given token gets rotated in its own 64-dimensional feature space before the dot products are computed.
 
 In SmolLM, each head vector has `head_dim = 64`.
 
@@ -135,54 +120,44 @@ So we treat the 64 numbers as **32 independent 2D pairs**.
 
 Each pair rotates at a different speed/frequency just like clock hands. The rotation frequencies are computed using a formula.
 
-- Pair 0 has a very large `theta` and rotates fast, letting the model distinguish adjacent words.
-- Pair 31 rotates very slowly (`theta` is tiny) and it acts like the hour hand where it preserves long-range thematic associations across an entire document.
+- **Pair 0** has a very large `theta` and rotates fast, letting the model distinguish adjacent words.
+- **Pair 31** rotates very slowly (`theta` is tiny) and it acts like the hour hand where it preserves long-range thematic associations across an entire document.
 
 ---
 
 # Core Principles of RoPE
 
-## 1. Geometric Rotation
+### 1. Geometric Rotation
 
 Instead of adding an absolute embedding vector to the input tokens, RoPE rotates `Q` and `K` vectors in geometric space based on their sequence index `m`:
 
-$$
-Q_{\text{rot}} = \text{Rotate}(Q, m \cdot \theta)
-$$
+$$Q_{\text{rot}} = \text{Rotate}(Q, m \cdot \theta)$$
 
-$$
-K_{\text{rot}} = \text{Rotate}(K, n \cdot \theta)
-$$
+$$K_{\text{rot}} = \text{Rotate}(K, n \cdot \theta)$$
 
 Because:
 
-$$
-u \cdot v = \Vert u \Vert \Vert v \Vert \cos(\phi)
-$$
+$$u \cdot v = \Vert u \Vert \Vert v \Vert \cos(\phi)$$
 
 rotating Q by `mθ` and K by `nθ` makes their dot product depend strictly on the relative distance `(m - n)θ`:
 
-$$
-\text{Score}(m,n) \propto \cos\big((m-n)\theta\big)
-$$
+$$\text{Score}(m,n) \propto \cos\big((m-n)\theta\big)$$
 
 ---
 
-## 2. Applied Exclusively to Q and K
+### 2. Applied Exclusively to Q and K
 
 - **Q (queries)** and **K (keys)** determine *where* attention focuses.
 - **V (values)** represents the *content* being retrieved and is **never** rotated.
 
 ---
 
-## 3. Why 64D Is Rotated as 32 Independent 2D Pairs
+### 3. Why 64D Is Rotated as 32 Independent 2D Pairs
 
 - **Rotations are 2D operations:** A rotation occurs within a 2D plane (`x` and `y` swap components via `sin` and `cos` while preserving vector length).
 - **Avoids full `64 × 64` dense matrix multiplications:** Block-diagonal structure allows element-wise execution:
 
-$$
-x_{\text{rot}} = x \odot \cos(\theta) + \tilde{x} \odot \sin(\theta)
-$$
+$$x_{\text{rot}} = x \odot \cos(\theta) + \tilde{x} \odot \sin(\theta)$$
 
 - **Preserves feature isolation:** Dimensions do not bleed across all 64 coordinates.
 
@@ -192,11 +167,20 @@ $$
 
 The base frequency formula for pair index `i ∈ [0, 1, ..., 31]` is:
 
-$$
-\theta_i = \text{base}^{-2i/d},
-\quad
-\text{where } \text{base} = 10000,\ d = 64
-$$
+$$\theta_i = \text{base}^{-2i/d}, \quad \text{where } \text{base} = 10000,\ d = 64$$
+
+Base is a hyperparameter also known as `rope_theta` (how fast or slow do the rotation angles change across the feature dimensions). 
+The size of `rope_theta` sets the effective maximum horizon over which the network can differentiate positions.
+
+* **If `rope_theta` is too small (e.g., 100):**
+  Even the slowest dimensions spin rapidly. After a few hundred tokens, all dimensions have completed many full revolutions and loop back on themselves. The model suffers from "aliasing"—it can't distinguish whether a token was at position 50 or position 250.
+
+* **If `rope_theta` is increased (e.g., 500,000):**
+  The rotation step per token becomes much smaller (slower). The model's coordinate dials take far longer to complete a cycle, allowing the model to distinguish positions across massive context lengths (like 8k, 32k, or 128k tokens) without the positional signals wrapping around. Because making `rope_theta` arbitrarily large creates a critical trade-off: increasing `rope_theta` stretches your maximum horizon, but it blunts the model's fine-grained resolution on short, local text. Look at the math, the rotation angle becomes close to 0 and you can't differentiate between neighboring tokens anymore.
+
+---
+
+### Frequency & Wavelength Breakdown Across Pairs
 
 | Pair Index (`i`) | Frequency (`θᵢ`) | Rotation Speed | Behavioral Analogy | Function in Language |
 | :--- | :--- | :--- | :--- | :--- |
