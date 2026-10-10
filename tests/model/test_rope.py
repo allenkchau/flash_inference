@@ -169,6 +169,7 @@ def test_rope_hf_numerical_parity(smollm_config):
     )
 
     position_ids = torch.arange(seq_len).unsqueeze(0).repeat(batch_size, 1)
+    print(f"Position Ids shape: {position_ids.shape}")
 
     # 2. Hugging Face reference forward
     cos_hf, sin_hf = hf_rope(q, position_ids)

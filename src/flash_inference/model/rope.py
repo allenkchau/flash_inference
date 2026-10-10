@@ -9,10 +9,10 @@ class RotaryEmbedding(nn.Module):
         super().__init__()
 
         # here we generate cos and sin angles for the max_seq_len once at the beginning of the transformer
-        positions = torch.arange(config.max_seq_len)    # shape: (max_seq_len)
+        positions = torch.arange(config.max_seq_len).float()    # shape: (max_seq_len)
 
         base = torch.tensor(config.rope_theta)
-        dim_indices = torch.arange(0, config.head_dim, 2)   # shape: (head_dim / 2)
+        dim_indices = torch.arange(0, config.head_dim, 2).float()   # shape: (head_dim / 2)
         freqs = 1.0 / torch.pow(base, dim_indices / config.head_dim)    # shape: (head_dim / 2)
 
         # we want to combine the positions with the freqs
@@ -34,15 +34,28 @@ class RotaryEmbedding(nn.Module):
         # position_ids has shape: (batch_size, seq_len)
         # when indexing Tensor[IndexTensor], the dimensions of IndexTensor replace the indexed dimension; the remaining unindexed dimensions are preserved at the end
         # new shape is shape: (batch_size, seq_len, head_dim)
-        cos = self.cos[position_ids]
-        sin = self.sin[position_ids]
-        return cos.unsqueeze(1), sin.unsqueeze(1)   # shape: (batch_size, 1(heads broadcasting), seq_len, head_dim)
+        
+        # we check if position_ids is just seq_len first
+        if position_ids.ndim == 1:
+            position_ids = position_ids.unsqueeze(0)
+        cos = self.cos[position_ids].unsqueeze(1)
+        sin = self.sin[position_ids].unsqueeze(1)
+        return cos, sin   # shape: (batch_size, 1(heads broadcasting), seq_len, head_dim)
 
 
 def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     """
     Takes cos and sin angles and applies them to actual Q and K vectors
     """
-
-    return 
+    # cos should have shape: (batch_size, 1(heads), seq_len, head_dim)
+    # if not, it just has shape: (batch_size, seq_len, head_dim) and we need to address that
+    if cos.ndim == 3:
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+    # x has shape: (batch_size, heads, seq_len, head_dim)
+    # split x into 2 equal halves along head_dim
+    half1, half2 = torch.chunk(x, chunks=2, dim=-1)
+    x_tilde = torch.cat([-half2, half1], dim=-1)
+    x_rot = (x * cos) + (x_tilde * sin)
+    return x_rot    # shape: (batch_size, heads, seq_len, head_dim)
 

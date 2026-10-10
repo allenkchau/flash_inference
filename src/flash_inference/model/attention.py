@@ -57,30 +57,31 @@ class GQAttention(nn.Module):
 
         # at this point for a single token, all heads are stuck together side by side in one flat n_heads * head_dim dimensional vector
         # we want to separate the n_heads * head_dim numbers into n_head distinct heads of head_dim numbers each
-        # then we need to split the query heads into groups and also add a group dimension of 1 to K and V
-        # Q has n_heads = n_kv_heads * group_size
+
+        # IMPORTANT: we do this reshape first before tranpose because the heads are sitting next to each other in memory so we can safely slice them into groups now
+        # if we did it the other way, we would be splitting across tokens not heads; reshape just grabs the next chunks of numbers in physical memory
+        # by reshaping into heads before moving seq_len, we guarantee that we group heads that actually sit next to each other in memory
+        Q = Q.view(batch_size, seq_len, self.n_heads, self.head_dim)
+        K = K.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+        V = V.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+
+        # now we have separate data for each head
+        # we want within each individual head for every token to look at every other token; we want an attn matrix of size (seq_len, seq_len)
+        # if we multiply Q and K as is we would be multiplying across heads not across tokens so we have to swap dims 1 and 2
+        Q = Q.transpose(1, 2)
+        K = K.transpose(1, 2)
+        V = V.transpose(1, 2)
 
         # before we split into groups we want to rotate Q and K so we can save K into our KV cache
         # if we rotate AFTER splitting into groups, either we are caching the K tensor which has been repeated group_size times or we have to resize it back to 4D anyway
         Q = apply_rotary_emb(Q, cos, sin)
         K = apply_rotary_emb(K, cos, sin)
 
-        # IMPORTANT: we do this reshape first before tranpose because the heads are sitting next to each other in memory so we can safely slice them into groups now
-        # if we did it the other way, we would be splitting across tokens not heads; reshape just grabs the next chunks of numbers in physical memory
-        # by reshaping into (n_kv_heads, group_size) before moving seq_len, we guarantee that we group heads that actually sit next to each other in memory
-        Q = Q.view(batch_size, seq_len, self.n_kv_heads, self.group_size, self.head_dim)
-        K = K.view(batch_size, seq_len, self.n_kv_heads, 1, self.head_dim)
-        V = V.view(batch_size, seq_len, self.n_kv_heads, 1, self.head_dim)
-
-        # now we have separate data for each head
-        # we want within each individual head for every token to look at every other token; we want an attn matrix of size (seq_len, seq_len)
-        # if we multiply Q and K as is we would be multiplying across heads not across tokens so we have to swap dims 1 and 2
-
-        # transpose seq_len to dimension -2 for matrix multiplication
-        # we want shape: (batch_size, n_kv_heads, group_size, seq_len, head_dim)
-        Q = Q.permute(0, 2, 3, 1, 4)
-        K = K.permute(0, 2, 3, 1, 4)
-        V = V.permute(0, 2, 3, 1, 4)
+        # then we need to split the query heads into groups and also add a group dimension of 1 to K and V
+        # Q has n_heads = n_kv_heads * group_size
+        Q = Q.view(batch_size, self.n_kv_heads, self.group_size, seq_len, self.head_dim)
+        K = K.view(batch_size, self.n_kv_heads, 1, seq_len, self.head_dim)
+        V = V.view(batch_size, self.n_kv_heads, 1, seq_len, self.head_dim)
 
         # calculate attention scores
         attn_scores = torch.matmul(
